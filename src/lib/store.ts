@@ -1,8 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from './firebase';
-import { firebaseService } from './firebaseService';
-import { SystemData, Employee, AttendanceRecord, LeaveRequest, Payroll, Holiday, Advance, Bonus, SaleRecord } from '../types';
+import { useState, useMemo } from 'react';
+import { SystemData, Employee, AttendanceRecord } from '../types';
 
 export function useStore() {
   const [data, setData] = useState<SystemData>({
@@ -22,90 +19,47 @@ export function useStore() {
     }
   });
 
-  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<Employee | null>({
+    id: '1',
+    name: 'Demo User',
+    email: 'demo@email.com',
+    role: 'Admin'
+  });
 
-  useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        const emp = await firebaseService.getEmployee(user.uid);
-        setCurrentUser(emp);
-      } else {
-        setCurrentUser(null);
-      }
-      setLoading(false);
-    });
+  const [loading] = useState(false);
 
-    return () => unsubAuth();
-  }, []);
-
-  useEffect(() => {
-    if (!currentUser) return;
-
-    const unsubEmp = firebaseService.subscribeAttendance((recs) => {
-      setData(prev => ({ ...prev, attendance: recs }));
-    }, currentUser.role === 'Employee' ? currentUser.id : undefined);
-
-    const unsubLeaves = firebaseService.subscribeLeaves((leaves) => {
-      setData(prev => ({ ...prev, leaves }));
-    }, currentUser.role === 'Employee' ? currentUser.id : undefined);
-
-    const unsubPayrolls = firebaseService.subscribePayrolls((payrolls) => {
-      setData(prev => ({ ...prev, payrolls }));
-    }, currentUser.role === 'Employee' ? currentUser.id : undefined);
-
-    const unsubHolidays = firebaseService.subscribeHolidays((holidays) => {
-      setData(prev => ({ ...prev, holidays }));
-    });
-
-    const unsubTasks = firebaseService.subscribeTasks((tasks) => {
-      setData(prev => ({ ...prev, tasks }));
-    }, currentUser.role === 'Employee' ? currentUser.id : undefined);
-
-    // Initial load for employees (Admin/Manager only)
-    if (currentUser.role !== 'Employee') {
-      firebaseService.getAllEmployees().then(emps => {
-        setData(prev => ({ ...prev, employees: emps }));
-      });
-    }
-
-    return () => {
-      unsubEmp();
-      unsubLeaves();
-      unsubPayrolls();
-      unsubHolidays();
-      unsubTasks();
-    };
-  }, [currentUser]);
-
+  // ✅ Local updates only (no Firebase)
   const updateData = (newData: Partial<SystemData>) => {
     setData(prev => ({ ...prev, ...newData }));
   };
 
-  const addEmployee = async (emp: Omit<Employee, 'id' | 'isActive'>) => {
-    // In real app, this would also create Firebase Auth account via Cloud Function
-    // For now, we assume user IDs are manually mapped or handled
+  const addEmployee = (emp: Omit<Employee, 'id' | 'isActive'>) => {
     const id = crypto.randomUUID();
-    await firebaseService.addEmployee(id, { ...emp, id, isActive: true });
-    // Refetch or let subscription handle it
-  };
+    const newEmp = { ...emp, id, isActive: true };
 
-  const recordAttendance = async (record: Omit<AttendanceRecord, 'id'>) => {
-    if (!record.employeeId && currentUser) {
-      record.employeeId = currentUser.id;
-    }
-    await firebaseService.recordAttendance(record);
-  };
-
-  const manualVerifyEmail = async (employeeId: string) => {
-    await updateEmployee(employeeId, { isEmailVerified: true });
-  };
-
-  const updateEmployee = async (employeeId: string, updates: Partial<Employee>) => {
-    await firebaseService.updateEmployee(employeeId, updates);
     setData(prev => ({
       ...prev,
-      employees: prev.employees.map(emp => 
+      employees: [...prev.employees, newEmp]
+    }));
+  };
+
+  const recordAttendance = (record: Omit<AttendanceRecord, 'id'>) => {
+    const newRecord = {
+      ...record,
+      id: crypto.randomUUID(),
+      employeeId: record.employeeId || currentUser?.id
+    };
+
+    setData(prev => ({
+      ...prev,
+      attendance: [...prev.attendance, newRecord]
+    }));
+  };
+
+  const updateEmployee = (employeeId: string, updates: Partial<Employee>) => {
+    setData(prev => ({
+      ...prev,
+      employees: prev.employees.map(emp =>
         emp.id === employeeId ? { ...emp, ...updates } : emp
       )
     }));
@@ -118,15 +72,16 @@ export function useStore() {
     setCurrentUser,
     addEmployee,
     updateEmployee,
-    manualVerifyEmail,
     recordAttendance,
     loading,
+
     emailMap: useMemo(() => {
       return data.employees.reduce((acc, emp) => {
         acc[emp.id] = emp.email;
         return acc;
       }, {} as Record<string, string>);
     }, [data.employees]),
+
     nameMap: useMemo(() => {
       return data.employees.reduce((acc, emp) => {
         acc[emp.id] = emp.name;
@@ -135,4 +90,3 @@ export function useStore() {
     }, [data.employees])
   };
 }
-
